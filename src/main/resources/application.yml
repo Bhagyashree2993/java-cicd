@@ -1,0 +1,28 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: java-app
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+app:
+  version: ${APP_VERSION:dev}
+  environment: ${APP_ENV:local}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true          # exposes /actuator/health/liveness and /readiness
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true

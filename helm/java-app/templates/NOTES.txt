@@ -1,0 +1,6 @@
+java-app {{ .Values.image.tag }} deployed to namespace {{ .Release.Namespace }}.
+
+Test it locally:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "java-app.fullname" . }} 8081:{{ .Values.service.port }}
+  curl http://localhost:8081/
+  curl "http://localhost:8081/api/greet?name=Argo"

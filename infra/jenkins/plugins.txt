@@ -1,0 +1,10 @@
+workflow-aggregator
+git
+github
+docker-workflow
+sonar
+junit
+credentials-binding
+timestamper
+ws-cleanup
+pipeline-stage-view
