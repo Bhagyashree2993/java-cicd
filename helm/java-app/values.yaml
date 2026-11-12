@@ -45,7 +45,7 @@ containerPort: 8080
 # injected as environment variables (envFrom). Changing a value rolls the pods.
 config:
   APP_ENV: production
-  LOG_LEVEL: INFO
+  LOG_LEVEL: DEBUG
 
 # Sensitive configuration -> Kubernetes Secret, injected as environment variables.
 #  * secret.data below holds PLACEHOLDERS only. Never commit real credentials here.
