@@ -68,7 +68,7 @@ env:
 #   LoadBalancer (Docker Desktop / cloud):  service.type: LoadBalancer
 #   Ingress (needs an ingress controller):  ingress.enabled: true
 service:
-  type: ClusterIP
+  type: LoadBalancer   # Docker Desktop publishes this on http://localhost:80
   port: 80
 
 ingress:
