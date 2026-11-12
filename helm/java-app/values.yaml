@@ -41,10 +41,32 @@ securityContext:
 
 containerPort: 8080
 
-env:
+# Non-sensitive application configuration -> rendered into a ConfigMap and
+# injected as environment variables (envFrom). Changing a value rolls the pods.
+config:
   APP_ENV: production
+  LOG_LEVEL: INFO
+
+# Sensitive configuration -> Kubernetes Secret, injected as environment variables.
+#  * secret.data below holds PLACEHOLDERS only. Never commit real credentials here.
+#  * For real values, create the Secret out-of-band (kubectl / Sealed Secrets /
+#    External Secrets) and point existingSecret at it:
+#      kubectl -n java-app create secret generic java-app-secrets \
+#        --from-literal=APP_API_KEY='<value>'
+#      -> then set  secret.existingSecret: java-app-secrets
+secret:
+  create: true
+  existingSecret: ""
+  data:
+    APP_API_KEY: "change-me-placeholder"
+
+# Plain environment variables (not config/secret) set directly on the container.
+env:
   JAVA_OPTS: "-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError"
 
+# Exposure: use EITHER a LoadBalancer Service OR the Ingress below.
+#   LoadBalancer (Docker Desktop / cloud):  service.type: LoadBalancer
+#   Ingress (needs an ingress controller):  ingress.enabled: true
 service:
   type: ClusterIP
   port: 80

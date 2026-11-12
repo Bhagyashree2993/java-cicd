@@ -20,6 +20,11 @@ spec:
   template:
     metadata:
       annotations:
+        # Roll the pods automatically when the ConfigMap / Secret content changes
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if and .Values.secret.create (not .Values.secret.existingSecret) }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -44,6 +49,13 @@ spec:
             - name: http
               containerPort: {{ .Values.containerPort }}
               protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "java-app.fullname" . }}
+            {{- if or .Values.secret.create .Values.secret.existingSecret }}
+            - secretRef:
+                name: {{ include "java-app.secretName" . }}
+            {{- end }}
           env:
             - name: APP_VERSION
               value: {{ .Values.image.tag | quote }}

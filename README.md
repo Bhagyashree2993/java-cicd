@@ -31,7 +31,7 @@ java-cicd/
 ├── Dockerfile                      # runtime image (uses JAR built by Jenkins)
 ├── Dockerfile.multistage           # self-contained build for local use
 ├── Jenkinsfile                     # the CI pipeline
-├── helm/java-app/                  # Helm chart (Deployment, Service, Ingress, HPA, PDB, SA)
+├── helm/java-app/                  # Helm chart (Deployment, Service, ConfigMap, Secret, Ingress, HPA, PDB, SA)
 ├── argocd/application.yaml         # Argo CD Application (auto-sync, prune, self-heal)
 ├── argocd/repo-secret.yaml         # only for private repos
 └── infra/                          # docker-compose for local Jenkins + SonarQube
@@ -158,6 +158,123 @@ kubectl -n java-app create secret docker-registry regcred \
    ```
 
 **Rollback:** revert the `values.yaml` commit in Git (`git revert <sha>`) — Argo CD rolls back automatically. Or use *History and Rollback* in the Argo CD UI (temporarily disable auto-sync first).
+
+---
+
+## Configuration & secrets
+
+| What | Where | Notes |
+|---|---|---|
+| Non-sensitive app config | `config:` in `values.yaml` -> **ConfigMap** -> env vars (`envFrom`) | Changing a value rolls the pods automatically (checksum annotation) |
+| Sensitive app config | `secret:` in `values.yaml` -> **Secret** -> env vars (`envFrom`) | `secret.data` holds a **placeholder only** |
+| Real credentials | Create the Secret outside Git, set `secret.existingSecret` | Never commit real values |
+| Jenkins credentials | Jenkins Credentials store (`dockerhub-creds`, `github-creds`, `sonar-token`) | Injected with `withCredentials`; nothing hardcoded in the `Jenkinsfile` |
+| Registry pull | `imagePullSecrets` (only for a private registry) | Created with `kubectl`, not stored in Git |
+
+Using a real secret without committing it:
+
+```bash
+kubectl -n java-app create secret generic java-app-secrets --from-literal=APP_API_KEY='<value>'
+# then in helm/java-app/values.yaml:  secret.existingSecret: java-app-secrets   (commit + push)
+```
+
+Security controls already in the chart: non-root user (UID 1001), `readOnlyRootFilesystem`, all capabilities dropped,
+`allowPrivilegeEscalation: false`, service-account token not mounted, dedicated ServiceAccount, Trivy scan in Jenkins.
+Jenkins never runs `kubectl` - it only commits to Git; Argo CD deploys.
+
+## Application URL (exposure)
+
+The chart supports both options required by the task. Pick one in `values.yaml`, commit, and push:
+
+```yaml
+# Option A - LoadBalancer (Docker Desktop / cloud)
+service:
+  type: LoadBalancer
+  port: 80
+# -> http://localhost/  (Docker Desktop)  or  http://<EXTERNAL-IP>/  (cloud)
+
+# Option B - Ingress (requires an ingress controller, e.g. ingress-nginx)
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: java-app.local        # add "127.0.0.1 java-app.local" to your hosts file
+      paths:
+        - path: /
+          pathType: Prefix
+```
+
+Quick check without changing anything: `kubectl -n java-app port-forward svc/java-app 8081:80` -> http://localhost:8081/
+
+## Zero-downtime deployment & rollback (demo)
+
+The Deployment uses `RollingUpdate` with `maxSurge: 1`, `maxUnavailable: 0`, plus readiness/liveness/startup probes, so a new
+pod must be Ready before an old pod is removed.
+
+> **Important:** every commit you make by hand that triggers Jenkins would build a *new* image and overwrite your rollback.
+> Put `[skip ci]` in the commit message of any manual GitOps commit (the pipeline's Checkout stage skips those).
+
+**A. Deploy a new version (normal path)**
+1. Change code, push to `main`. Jenkins builds, tests, scans, pushes `<build#>-<sha>` and commits the new tag.
+2. Watch the rollout:
+   ```bash
+   kubectl -n java-app rollout status deploy/java-app
+   kubectl -n java-app get pods -w
+   kubectl -n argocd get application java-app
+   curl http://localhost:8081/        # shows the new version (APP_VERSION)
+   ```
+3. Keep `while true; do curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8081/actuator/health; sleep 1; done`
+   running in another terminal to show there is no downtime (all `200`).
+
+**B. Simulate an unsuccessful deployment**
+1. In `helm/java-app/values.yaml` set `image.tag: "does-not-exist"`, then
+   `git commit -am "demo: bad image [skip ci]" && git push`.
+2. Argo CD syncs; the new pod goes to `ImagePullBackOff`/`ErrImagePull` but the **old pods keep serving traffic**
+   (`maxUnavailable: 0`). Evidence: `kubectl -n java-app get pods` and `kubectl -n java-app describe pod <new-pod>`.
+
+**C. Roll back to the previous working version (GitOps way - recommended)**
+```bash
+git revert --no-edit HEAD            # restores the previous image tag
+git commit --amend -m "rollback: restore previous image [skip ci]"
+git push
+kubectl -n java-app rollout status deploy/java-app
+kubectl -n java-app rollout history deploy/java-app
+```
+Alternative: Argo CD UI -> app -> **History and Rollback** (turn off auto-sync first, otherwise `selfHeal` re-applies Git).
+`kubectl rollout undo` also works, but with `selfHeal: true` Argo CD reverts it to match Git, so use Git or the Argo UI.
+
+## Monitoring & logging
+
+Uses Kubernetes built-ins + metrics-server (required by the HPA) + Argo CD health. Prometheus metrics are also exposed at `/actuator/prometheus`.
+
+| What to monitor | Command |
+|---|---|
+| Pod status | `kubectl -n java-app get pods -o wide` |
+| Pod restarts | `kubectl -n java-app get pods` (RESTARTS column) |
+| CPU / memory | `kubectl top pods -n java-app` and `kubectl -n java-app get hpa java-app` |
+| Application logs | `kubectl -n java-app logs deploy/java-app --tail=100` (add `-f` to follow, `--previous` after a crash) |
+| Why a pod is unhealthy | `kubectl -n java-app describe pod <pod>` and `kubectl -n java-app get events --sort-by=.lastTimestamp` |
+| Rollout state | `kubectl -n java-app rollout status deploy/java-app` |
+| Argo CD health / sync | `kubectl -n argocd get application java-app` (or the Argo CD UI) |
+
+Troubleshooting examples to include as evidence:
+- **Degraded HPA** - `kubectl -n java-app describe hpa java-app` showing `FailedGetResourceMetric` until metrics-server was installed; fixed, `TARGETS` now shows `cpu: 2%/70%`.
+- **ImagePullBackOff** - from the bad-tag demo above; found with `describe pod` / events.
+
+## Submission checklist
+
+| Requirement | Evidence to attach |
+|---|---|
+| 1-2 Java app, Maven | Jenkins console: `mvn clean verify` + test results; app URL |
+| 3 SonarQube | Project dashboard + Quality Gate "Passed" screenshot |
+| 4 Docker | `Dockerfile`, `.dockerignore`, `docker run` / `docker images` output |
+| 5 Registry | Docker Hub tags page showing `<build#>-<sha>` |
+| 6-7 Helm / Kubernetes | `helm/java-app/`, `kubectl -n java-app get deploy,po,svc,cm,secret,hpa,pdb` (do not show secret values) |
+| 8 Argo CD | UI or `kubectl -n argocd get application java-app` -> `Synced` / `Healthy`; a Git change being auto-synced |
+| 9-10 Jenkins -> Argo CD | `Jenkinsfile`, pipeline stage view, the `ci: deploy java-app <tag> [skip ci]` commit |
+| 11 Security | Jenkins credentials page (IDs only), `securityContext` in values, no secrets in Git |
+| 12 Rollback | Sections A-C above: rollout, bad deploy, rollback outputs |
+| 13 Monitoring | Output of the commands in the monitoring table |
 
 ---
 

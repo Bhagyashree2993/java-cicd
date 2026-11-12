@@ -38,3 +38,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{- define "java-app.secretName" -}}
+{{- default (include "java-app.fullname" .) .Values.secret.existingSecret }}
+{{- end }}
