@@ -6,7 +6,7 @@ replicaCount: 2
 
 image:
   repository: docker.io/guvibhagyashreekhandare/java-app
-  tag: "latest"
+  tag: "5-4c2e880"
   pullPolicy: IfNotPresent
 
 # For a private registry, create a docker-registry secret and reference it here:
