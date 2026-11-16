@@ -1,0 +1,16 @@
+# `helm test <release>` runs this pod to check the Service answers on port 8080
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "habit-tracker.fullname" . }}-test-connection"
+  labels:
+    {{- include "habit-tracker.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: wget
+      image: busybox:1.36
+      command: ["wget", "-qO-", "http://{{ include "habit-tracker.fullname" . }}:{{ .Values.service.port }}/actuator/health/readiness"]

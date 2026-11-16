@@ -1,15 +1,16 @@
 // =============================================================================
-// CI pipeline: GitHub → Jenkins → Maven → Test → SonarQube → Docker → Registry
-//              → update Helm values in Git → Argo CD syncs to Kubernetes
-// =============================================================================
-// Jenkins prerequisites (see README.md, "Jenkins setup"):
-//   Plugins     : Pipeline, Git, Docker Pipeline, SonarQube Scanner, JUnit,
-//                 JaCoCo (optional), Credentials Binding, Timestamper
-//   Tools       : JDK named 'jdk17', Maven named 'maven3'
-//   SonarQube   : server named 'sonarqube' (Manage Jenkins → System)
-//   Credentials : 'dockerhub-creds'  (Username/Password – registry login/token)
-//                 'github-creds'     (Username/Password – GitHub user + PAT)
-//   Agent       : must have Docker CLI + access to a Docker daemon
+// Habit Tracker CI pipeline (Jenkins does CI only - it never runs kubectl)
+//
+//  GitHub -> Checkout -> Maven build & unit tests -> SonarQube + Quality Gate
+//         -> Docker multi-stage build -> Trivy scan -> container smoke test
+//         -> push versioned image to Docker Hub -> update Helm values in Git
+//         -> Argo CD (GitOps) syncs the new version to Kubernetes
+//
+// Jenkins prerequisites:
+//   Tools       : JDK 'jdk17', Maven 'maven3'
+//   SonarQube   : server 'sonarqube' + webhook  http://jenkins:8080/sonarqube-webhook/
+//   Credentials : 'dockerhub-creds' (user + access token), 'github-creds' (user + PAT),
+//                 'sonar-token' (secret text, used by the SonarQube server config)
 // =============================================================================
 
 pipeline {
@@ -21,21 +22,18 @@ pipeline {
     }
 
     environment {
-        // ---- change these to match your setup ----
-        REGISTRY        = 'docker.io'
-        IMAGE_REPO      = 'guvibhagyashreekhandare/java-app'
-        GIT_REPO_URL    = 'https://github.com/Bhagyashree2993/java-cicd.git'
-        TARGET_BRANCH   = 'main'          // branch that deploys
-        HELM_VALUES     = 'helm/java-app/values.yaml'
-        GIT_USER_NAME   = 'jenkins-ci'
-        GIT_USER_EMAIL  = 'jenkins-ci@example.com'
-        // -------------------------------------------
-        IMAGE_TAG       = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'local'}"
+        REGISTRY       = 'docker.io'
+        IMAGE_REPO     = 'guvibhagyashreekhandare/habit-tracker'
+        GIT_REPO_URL   = 'https://github.com/Bhagyashree2993/java-cicd.git'
+        TARGET_BRANCH  = 'main'
+        HELM_VALUES    = 'helm/habit-tracker/values.yaml'
+        GIT_USER_NAME  = 'jenkins-ci'
+        GIT_USER_EMAIL = 'jenkins-ci@example.com'
     }
 
     options {
         timestamps()
-        timeout(time: 30, unit: 'MINUTES')
+        timeout(time: 45, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '20'))
         disableConcurrentBuilds()
     }
@@ -46,16 +44,22 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    // Avoid an endless loop: the "Update Helm values" stage below pushes
-                    // a commit, which would otherwise trigger this pipeline again.
+                    // The GitOps stage pushes a "[skip ci]" commit; don't rebuild for it.
                     def lastMsg = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
                     if (lastMsg.contains('[skip ci]')) {
                         currentBuild.result = 'NOT_BUILT'
                         currentBuild.description = 'Skipped: GitOps image-tag commit'
                         env.SKIP_PIPELINE = 'true'
-                        echo 'Commit was made by CI ([skip ci]) — skipping the rest of the pipeline.'
+                        echo 'Commit was made by CI ([skip ci]) - skipping.'
+                    } else {
+                        def appVersion = sh(script: "mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout",
+                                            returnStdout: true).trim()
+                        env.APP_VERSION = appVersion
+                        // Semantic version + build number + git commit, e.g. 1.0.0-12-a1b2c3d
+                        env.IMAGE_TAG = "${appVersion}-${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
+                        currentBuild.description = "image ${env.IMAGE_TAG}"
+                        echo "Version ${env.APP_VERSION}, image tag ${env.IMAGE_TAG}"
                     }
-                    echo "Image tag for this build: ${env.IMAGE_TAG}"
                 }
             }
         }
@@ -68,7 +72,7 @@ pipeline {
             post {
                 always {
                     junit testResults: 'target/surefire-reports/*.xml', allowEmptyResults: false
-                    archiveArtifacts artifacts: 'target/java-app.jar', fingerprint: true, onlyIfSuccessful: true
+                    archiveArtifacts artifacts: 'target/habit-tracker.jar', fingerprint: true, onlyIfSuccessful: true
                 }
             }
         }
@@ -85,22 +89,22 @@ pipeline {
         stage('Quality Gate') {
             when { not { environment name: 'SKIP_PIPELINE', value: 'true' } }
             steps {
-                // Requires a SonarQube webhook → http://<jenkins>/sonarqube-webhook/
-                timeout(time: 5, unit: 'MINUTES') {
+                timeout(time: 10, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
             }
         }
 
-        stage('Docker Build') {
+        stage('Docker Build (multi-stage)') {
             when { not { environment name: 'SKIP_PIPELINE', value: 'true' } }
             steps {
                 sh '''
                     docker build \
+                      --build-arg APP_VERSION=${IMAGE_TAG} \
                       --label org.opencontainers.image.revision=${GIT_COMMIT} \
-                      --label org.opencontainers.image.version=${IMAGE_TAG} \
                       -t ${REGISTRY}/${IMAGE_REPO}:${IMAGE_TAG} \
                       -t ${REGISTRY}/${IMAGE_REPO}:latest .
+                    docker image ls ${REGISTRY}/${IMAGE_REPO}
                 '''
             }
         }
@@ -108,12 +112,41 @@ pipeline {
         stage('Image Scan (Trivy)') {
             when { not { environment name: 'SKIP_PIPELINE', value: 'true' } }
             steps {
-                // Non-blocking by default; change --exit-code to 1 to fail on HIGH/CRITICAL.
+                // Report-only: HIGH/CRITICAL findings are listed but do not fail the build.
+                // The trivy-cache volume keeps the vulnerability DB between builds.
                 sh '''
-                    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-                      aquasec/trivy:latest image --no-progress --exit-code 0 \
-                      --severity HIGH,CRITICAL ${REGISTRY}/${IMAGE_REPO}:${IMAGE_TAG} || true
+                    docker run --rm \
+                      -v /var/run/docker.sock:/var/run/docker.sock \
+                      -v trivy-cache:/root/.cache/ \
+                      aquasec/trivy:latest image --no-progress --scanners vuln \
+                      --timeout 20m --exit-code 0 --severity HIGH,CRITICAL \
+                      ${REGISTRY}/${IMAGE_REPO}:${IMAGE_TAG} \
+                    || echo "WARNING: Trivy scan could not complete (network/DB). Scan is non-blocking."
                 '''
+            }
+        }
+
+        stage('Container Smoke Test') {
+            when { not { environment name: 'SKIP_PIPELINE', value: 'true' } }
+            steps {
+                // Start the image and check it answers on port 8080 before it is published
+                sh '''
+                    docker rm -f habit-smoke >/dev/null 2>&1 || true
+                    docker run -d --name habit-smoke ${REGISTRY}/${IMAGE_REPO}:${IMAGE_TAG}
+                    for i in $(seq 1 30); do
+                      if docker exec habit-smoke wget -qO- http://127.0.0.1:8080/actuator/health/readiness 2>/dev/null; then
+                        echo; echo "Readiness OK after ${i} tries"; break
+                      fi
+                      sleep 3
+                      if [ "$i" = "30" ]; then docker logs habit-smoke; exit 1; fi
+                    done
+                    echo "--- GET /api/info ---";   docker exec habit-smoke wget -qO- http://127.0.0.1:8080/api/info;   echo
+                    echo "--- GET /api/habits ---"; docker exec habit-smoke wget -qO- http://127.0.0.1:8080/api/habits; echo
+                    echo "--- container runs as ---"; docker exec habit-smoke id
+                '''
+            }
+            post {
+                always { sh 'docker rm -f habit-smoke >/dev/null 2>&1 || true' }
             }
         }
 
@@ -139,7 +172,6 @@ pipeline {
             when {
                 allOf {
                     not { environment name: 'SKIP_PIPELINE', value: 'true' }
-                    // works for both Multibranch (BRANCH_NAME set) and plain Pipeline jobs
                     expression { env.BRANCH_NAME == null || env.BRANCH_NAME == env.TARGET_BRANCH }
                 }
             }
@@ -154,7 +186,6 @@ pipeline {
                         git fetch origin ${TARGET_BRANCH}
                         git checkout -B ${TARGET_BRANCH} origin/${TARGET_BRANCH}
 
-                        # Update image repository + tag in the Helm values file
                         sed -i "s|^\\(\\s*repository:\\).*|\\1 ${REGISTRY}/${IMAGE_REPO}|" ${HELM_VALUES}
                         sed -i "s|^\\(\\s*tag:\\).*|\\1 \\"${IMAGE_TAG}\\"|"               ${HELM_VALUES}
                         grep -nE 'repository:|tag:' ${HELM_VALUES}
@@ -163,7 +194,7 @@ pipeline {
                         if git diff --cached --quiet; then
                           echo "No change in Helm values."
                         else
-                          git commit -m "ci: deploy java-app ${IMAGE_TAG} [skip ci]"
+                          git commit -m "ci: deploy habit-tracker ${IMAGE_TAG} [skip ci]"
                           REPO_PATH=$(echo ${GIT_REPO_URL} | sed 's|https://||')
                           git push https://${GIT_USER}:${GIT_TOKEN}@${REPO_PATH} HEAD:${TARGET_BRANCH}
                         fi
@@ -177,13 +208,13 @@ pipeline {
         success {
             script {
                 if (env.SKIP_PIPELINE != 'true') {
-                    echo "✅ ${IMAGE_REPO}:${IMAGE_TAG} pushed. Argo CD will sync it to Kubernetes."
+                    echo "SUCCESS: ${IMAGE_REPO}:${IMAGE_TAG} pushed; Argo CD will deploy it to Kubernetes."
                 }
             }
         }
-        failure { echo '❌ Pipeline failed — check the stage logs above.' }
+        failure { echo 'FAILED - check the stage logs above.' }
         always {
-            sh 'docker image prune -f || true'
+            sh 'docker image prune -f >/dev/null 2>&1 || true'
             cleanWs()
         }
     }

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Habit Tracker</title>
+  <style>
+    :root { --bg:#f5f7fb; --card:#fff; --ink:#1d2433; --muted:#667085; --accent:#2f6fed; --ok:#12a150; --line:#e4e7ec; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background:var(--bg); color:var(--ink); }
+    header { background:var(--ink); color:#fff; padding:20px 16px; }
+    header .wrap { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+    h1 { margin:0; font-size:24px; }
+    .wrap { max-width:860px; margin:0 auto; }
+    .badge { font-size:12px; background:#ffffff22; padding:4px 10px; border-radius:999px; margin-left:6px; white-space:nowrap; }
+    main { padding:20px 16px; }
+    .greeting { color:var(--muted); margin:0 0 16px; }
+    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:20px; }
+    .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; }
+    .stat b { display:block; font-size:26px; }
+    .stat span { color:var(--muted); font-size:13px; }
+    form { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px; }
+    input { flex:1 1 200px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:15px; }
+    button { border:0; border-radius:8px; padding:10px 14px; font-size:14px; cursor:pointer; background:var(--accent); color:#fff; }
+    button.secondary { background:#eef2ff; color:var(--accent); }
+    button.danger { background:#fff0f0; color:#c0392b; }
+    .habit { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:10px;
+             display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+    .habit.done { border-color:var(--ok); }
+    .habit h3 { margin:0 0 4px; font-size:16px; }
+    .habit p { margin:0; color:var(--muted); font-size:13px; }
+    .meta { font-size:13px; color:var(--muted); margin-top:6px; }
+    .actions { display:flex; gap:6px; }
+    .error { color:#c0392b; min-height:20px; }
+    footer { color:var(--muted); font-size:12px; text-align:center; padding:20px; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>✅ Habit Tracker</h1>
+    <div><span class="badge" id="version">version …</span><span class="badge" id="env">env …</span><span class="badge" id="pod">pod …</span></div>
+  </div>
+</header>
+<main class="wrap">
+  <p class="greeting" id="greeting"></p>
+  <section class="stats">
+    <div class="stat"><b id="s-total">0</b><span>Habits</span></div>
+    <div class="stat"><b id="s-done">0</b><span>Done today</span></div>
+    <div class="stat"><b id="s-rate">0%</b><span>Completion today</span></div>
+    <div class="stat"><b id="s-streak">0</b><span>Best current streak (days)</span></div>
+  </section>
+  <form id="add">
+    <input id="name" placeholder="New habit, e.g. Meditate 10 minutes" maxlength="60" required>
+    <input id="desc" placeholder="Description (optional)" maxlength="200">
+    <button type="submit">Add habit</button>
+  </form>
+  <div class="error" id="error"></div>
+  <section id="list"></section>
+</main>
+<footer>Spring Boot · Jenkins · SonarQube · Docker · Helm · Argo CD · Kubernetes</footer>
+<script>
+  const $ = id => document.getElementById(id);
+  const api = (path, opts = {}) => fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts })
+    .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText); return r.status === 204 ? null : r.json(); });
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+  async function load() {
+    try {
+      const [habits, stats] = await Promise.all([api('/api/habits'), api('/api/stats')]);
+      $('s-total').textContent = stats.totalHabits;
+      $('s-done').textContent = stats.completedToday;
+      $('s-rate').textContent = stats.completionRateToday + '%';
+      $('s-streak').textContent = stats.bestCurrentStreak;
+      $('list').innerHTML = habits.length ? habits.map(h => `
+        <div class="habit ${h.completedToday ? 'done' : ''}">
+          <div>
+            <h3>${h.completedToday ? '✅' : '⬜'} ${esc(h.name)}</h3>
+            <p>${esc(h.description || '')}</p>
+            <div class="meta">🔥 Streak: ${h.currentStreak} day(s) · Best: ${h.longestStreak} · Total: ${h.totalCompletions}</div>
+          </div>
+          <div class="actions">
+            ${h.completedToday
+              ? `<button class="secondary" onclick="act(${h.id},'DELETE','/check-in')">Undo</button>`
+              : `<button onclick="act(${h.id},'POST','/check-in')">Done today</button>`}
+            <button class="danger" onclick="act(${h.id},'DELETE','')">Delete</button>
+          </div>
+        </div>`).join('') : '<p>No habits yet. Add your first one above.</p>';
+      $('error').textContent = '';
+    } catch (e) { $('error').textContent = 'Could not load habits: ' + e.message; }
+  }
+  async function act(id, method, suffix) {
+    try { await api(`/api/habits/${id}${suffix}`, { method }); load(); }
+    catch (e) { $('error').textContent = e.message; }
+  }
+  $('add').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    try {
+      await api('/api/habits', { method: 'POST', body: JSON.stringify({ name: $('name').value, description: $('desc').value }) });
+      $('name').value = ''; $('desc').value = ''; load();
+    } catch (e) { $('error').textContent = e.message; }
+  });
+  api('/api/info').then(i => {
+    $('version').textContent = 'version ' + i.version;
+    $('env').textContent = i.environment;
+    $('pod').textContent = 'pod ' + i.pod;
+    $('greeting').textContent = i.greeting;
+  }).catch(() => {});
+  load();
+</script>
+</body>
+</html>

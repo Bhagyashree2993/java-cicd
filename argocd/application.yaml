@@ -1,29 +1,29 @@
-# Argo CD Application — watches helm/java-app in this repo and keeps the
-# cluster in sync with it. Apply once:  kubectl apply -f argocd/application.yaml
+# Argo CD Application - watches helm/habit-tracker in Git and keeps the cluster in sync.
+# Apply once:  kubectl apply -f argocd/application.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: java-app
+  name: habit-tracker
   namespace: argocd
   finalizers:
-    - resources-finalizer.argocd.argoproj.io   # delete app resources when the Application is deleted
+    - resources-finalizer.argocd.argoproj.io   # remove app resources when the Application is deleted
 spec:
   project: default
   source:
     repoURL: https://github.com/Bhagyashree2993/java-cicd.git
     targetRevision: main
-    path: helm/java-app
+    path: helm/habit-tracker
     helm:
-      releaseName: java-app
+      releaseName: habit-tracker
       valueFiles:
         - values.yaml
   destination:
     server: https://kubernetes.default.svc
-    namespace: java-app
+    namespace: habit-tracker
   syncPolicy:
     automated:
-      prune: true        # remove resources deleted from Git
-      selfHeal: true     # revert manual changes made in the cluster
+      prune: true        # delete resources removed from Git
+      selfHeal: true     # undo manual changes made in the cluster
     syncOptions:
       - CreateNamespace=true
       - ApplyOutOfSyncOnly=true
@@ -33,4 +33,4 @@ spec:
         duration: 10s
         factor: 2
         maxDuration: 3m
-  revisionHistoryLimit: 10
+  revisionHistoryLimit: 10   # deployment history used for rollback in the Argo CD UI

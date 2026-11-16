@@ -1,4 +1,19 @@
-*
-!target/java-app.jar
-!pom.xml
-!src/
+# Keep the build context small and free of secrets/CI files
+.git
+.gitignore
+.idea
+.vscode
+*.iml
+target
+helm
+argocd
+infra
+monitoring
+docs
+Jenkinsfile
+Dockerfile
+.dockerignore
+*.md
+*.pdf
+*.docx
+*.log

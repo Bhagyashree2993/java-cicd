@@ -1,0 +1,124 @@
+# Default values for the habit-tracker chart.
+# image.repository / image.tag are updated automatically by Jenkins
+# (stage "Update Helm values"); Argo CD then syncs the change to Kubernetes.
+
+replicaCount: 2
+
+image:
+  repository: docker.io/guvibhagyashreekhandare/habit-tracker
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# ---- Application configuration -> ConfigMap (non-secret settings) ----
+config:
+  APP_ENV: "production"
+  APP_GREETING: "Build better habits, one day at a time."
+  APP_SEED_DEMO_DATA: "true"
+  LOG_LEVEL: INFO
+  JAVA_OPTS: "-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError"
+
+# ---- Sensitive configuration -> Secret ----
+# For a real production cluster do NOT keep secret values in Git: set
+# secret.existingSecret to a Secret created by Sealed Secrets / External Secrets,
+# or pass the value at install time (--set secret.adminToken=...).
+secret:
+  existingSecret: ""
+  adminToken: "change-me-demo-token"
+
+# Docker Desktop publishes a LoadBalancer Service on the laptop, so the app is
+# reachable at http://127.0.0.1:8080 (Jenkins runs on 8090 to free port 8080).
+# Use ClusterIP + Ingress on a cloud cluster.
+service:
+  type: LoadBalancer
+  port: 8080
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: habit-tracker.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Zero-downtime rolling updates
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+revisionHistoryLimit: 10   # keeps old ReplicaSets so `kubectl rollout undo` works
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  startup:
+    path: /actuator/health/liveness
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    failureThreshold: 30
+  liveness:
+    path: /actuator/health/liveness
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /actuator/health/readiness
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/path: /actuator/prometheus
+  prometheus.io/port: "8080"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: true      # only allow inbound traffic to port 8080
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

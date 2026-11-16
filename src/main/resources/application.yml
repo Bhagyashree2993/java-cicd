@@ -4,25 +4,38 @@ server:
 
 spring:
   application:
-    name: java-app
+    name: habit-tracker
   lifecycle:
     timeout-per-shutdown-phase: 20s
 
+# Values below are overridden in Kubernetes by the ConfigMap (APP_*) and Secret (APP_ADMIN_TOKEN)
 app:
   version: ${APP_VERSION:dev}
   environment: ${APP_ENV:local}
+  greeting: ${APP_GREETING:Build better habits, one day at a time.}
+  seed-demo-data: ${APP_SEED_DEMO_DATA:true}
+  admin-token: ${APP_ADMIN_TOKEN:}
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus
+        include: health,info,prometheus,metrics
   endpoint:
     health:
       probes:
-        enabled: true          # exposes /actuator/health/liveness and /readiness
-  health:
-    livenessstate:
+        enabled: true          # /actuator/health/liveness and /actuator/health/readiness
+      show-details: never
+  info:
+    build:
       enabled: true
-    readinessstate:
-      enabled: true
+  metrics:
+    tags:
+      application: habit-tracker
+
+logging:
+  level:
+    root: INFO
+    com.example.habittracker: ${LOG_LEVEL:INFO}
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %logger{36} - %msg%n"

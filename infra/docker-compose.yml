@@ -1,16 +1,15 @@
-# Local Jenkins + SonarQube for learning / testing the pipeline.
+# Local Jenkins + SonarQube for the pipeline.
 #   cd infra && docker compose up -d --build
-#   Jenkins   → http://localhost:8080   (initial password: docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword)
-#   SonarQube → http://localhost:9000   (admin / admin, you'll be asked to change it)
-#
-# SonarQube needs this on the Docker host (Linux):  sudo sysctl -w vm.max_map_count=524288
+#   Jenkins   -> http://127.0.0.1:8090   (port 8080 is left free for the Habit Tracker app)
+#   SonarQube -> http://127.0.0.1:9000
+# SonarQube on Docker Desktop needs:  wsl -d docker-desktop sysctl -w vm.max_map_count=524288
 services:
   jenkins:
     build: ./jenkins
     container_name: jenkins
     user: root                      # lets the container use the host Docker socket
     ports:
-      - "8080:8080"
+      - "8090:8080"                 # host 8090 -> Jenkins 8080 (inside Docker it is still jenkins:8080)
       - "50000:50000"
     volumes:
       - jenkins_home:/var/jenkins_home

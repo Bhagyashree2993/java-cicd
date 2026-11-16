@@ -1,0 +1,12 @@
+Habit Tracker {{ .Values.image.tag }} is deployed to namespace {{ .Release.Namespace }}.
+
+{{- if eq .Values.service.type "LoadBalancer" }}
+Open the app: http://127.0.0.1:{{ .Values.service.port }}
+  (kubectl -n {{ .Release.Namespace }} get svc {{ include "habit-tracker.fullname" . }} shows the external address)
+{{- else }}
+Open the app:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "habit-tracker.fullname" . }} 8080:{{ .Values.service.port }}
+  then browse http://127.0.0.1:8080
+{{- end }}
+
+API: /api/info  /api/habits  /api/stats   Health: /actuator/health/readiness

@@ -1,0 +1,15 @@
+# Docker Desktop's Kubernetes uses self-signed kubelet certificates, so metrics-server
+# needs --kubelet-insecure-tls (local clusters only). Apply after installing metrics-server:
+#   kubectl -n kube-system patch deployment metrics-server --patch-file monitoring/metrics-server-patch.yaml
+spec:
+  template:
+    spec:
+      containers:
+        - name: metrics-server
+          args:
+            - --cert-dir=/tmp
+            - --secure-port=10250
+            - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
+            - --kubelet-use-node-status-port
+            - --metric-resolution=15s
+            - --kubelet-insecure-tls
