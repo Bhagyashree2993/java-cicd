@@ -156,10 +156,18 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
                                                   usernameVariable: 'REG_USER',
                                                   passwordVariable: 'REG_PASS')]) {
+                    // Registry connections can drop on flaky networks: retry up to 6 times
                     sh '''
-                        echo "$REG_PASS" | docker login ${REGISTRY} -u "$REG_USER" --password-stdin
-                        docker push ${REGISTRY}/${IMAGE_REPO}:${IMAGE_TAG}
-                        docker push ${REGISTRY}/${IMAGE_REPO}:latest
+                        ok=0
+                        for attempt in 1 2 3 4 5 6; do
+                          if echo "$REG_PASS" | docker login ${REGISTRY} -u "$REG_USER" --password-stdin \
+                             && docker push ${REGISTRY}/${IMAGE_REPO}:${IMAGE_TAG} \
+                             && docker push ${REGISTRY}/${IMAGE_REPO}:latest; then
+                            ok=1; echo "Push succeeded on attempt ${attempt}"; break
+                          fi
+                          echo "Push attempt ${attempt} failed - retrying in 20s"; sleep 20
+                        done
+                        [ "$ok" = "1" ]
                     '''
                 }
             }
