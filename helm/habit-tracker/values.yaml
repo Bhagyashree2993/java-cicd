@@ -6,7 +6,7 @@ replicaCount: 2
 
 image:
   repository: docker.io/guvibhagyashreekhandare/habit-tracker
-  tag: "does-not-exist"
+  tag: "1.0.0-5-bfb766f"
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
