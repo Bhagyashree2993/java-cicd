@@ -1,123 +1,133 @@
 package com.example.habittracker.service;
 
-import com.example.habittracker.config.AppProperties;
-import com.example.habittracker.dto.HabitResponse;
-import com.example.habittracker.dto.StatsResponse;
+import com.example.habittracker.dto.HabitRequest;
+import com.example.habittracker.dto.HabitStats;
 import com.example.habittracker.model.Habit;
-import jakarta.annotation.PostConstruct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.example.habittracker.repository.HabitRepository;
 import org.springframework.stereotype.Service;
 
-import java.time.Clock;
 import java.time.LocalDate;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.TreeSet;
 
-/**
- * Stores habits in memory. Each pod keeps its own data; this keeps the demo
- * dependency-free (no database) while the CI/CD pipeline is the focus.
- */
 @Service
 public class HabitService {
 
-    private static final Logger log = LoggerFactory.getLogger(HabitService.class);
+    private final HabitRepository repository;
 
-    private final Map<Long, Habit> habits = new ConcurrentHashMap<>();
-    private final AtomicLong ids = new AtomicLong();
-    private final Clock clock;
-    private final AppProperties props;
-
-    public HabitService(Clock clock, AppProperties props) {
-        this.clock = clock;
-        this.props = props;
+    public HabitService(HabitRepository repository) {
+        this.repository = repository;
     }
 
-    @PostConstruct
-    void seedDemoData() {
-        if (!props.isSeedDemoData()) {
+    public Habit create(HabitRequest request) {
+        Habit habit = new Habit(null, request.getName(), request.getDescription(), request.getFrequency());
+        return repository.save(habit);
+    }
+
+    public List<Habit> getAll() {
+        return repository.findAll();
+    }
+
+    public Habit getById(Long id) {
+        return repository.findById(id).orElseThrow(() -> new HabitNotFoundException(id));
+    }
+
+    public Habit update(Long id, HabitRequest request) {
+        Habit habit = getById(id);
+        habit.setName(request.getName());
+        habit.setDescription(request.getDescription());
+        if (request.getFrequency() != null) {
+            habit.setFrequency(request.getFrequency());
+        }
+        return repository.save(habit);
+    }
+
+    public void delete(Long id) {
+        if (!repository.existsById(id)) {
+            throw new HabitNotFoundException(id);
+        }
+        repository.deleteById(id);
+    }
+
+    public Habit setActive(Long id, boolean active) {
+        Habit habit = getById(id);
+        habit.setActive(active);
+        return repository.save(habit);
+    }
+
+    /**
+     * Marks a habit complete for today (or a given date) and recalculates streaks.
+     */
+    public Habit markComplete(Long id, LocalDate date) {
+        Habit habit = getById(id);
+        LocalDate day = date != null ? date : LocalDate.now();
+        habit.getCompletedDates().add(day);
+        recalculateStreaks(habit);
+        return repository.save(habit);
+    }
+
+    public Habit unmarkComplete(Long id, LocalDate date) {
+        Habit habit = getById(id);
+        LocalDate day = date != null ? date : LocalDate.now();
+        habit.getCompletedDates().remove(day);
+        recalculateStreaks(habit);
+        return repository.save(habit);
+    }
+
+    private void recalculateStreaks(Habit habit) {
+        TreeSet<LocalDate> sorted = new TreeSet<>(habit.getCompletedDates());
+        if (sorted.isEmpty()) {
+            habit.setCurrentStreak(0);
+            habit.setLongestStreak(0);
             return;
         }
-        LocalDate today = today();
-        Habit water = create("Drink 8 glasses of water", "Stay hydrated through the day");
-        Habit read = create("Read 20 pages", "One chapter a day");
-        create("30 minutes exercise", "Walk, run or gym");
-        for (int i = 1; i <= 5; i++) {
-            water.complete(today.minusDays(i));
+
+        int longest = 1;
+        int running = 1;
+        LocalDate previous = null;
+
+        for (LocalDate day : sorted) {
+            if (previous != null && previous.plusDays(1).equals(day)) {
+                running++;
+            } else if (previous != null) {
+                running = 1;
+            }
+            longest = Math.max(longest, running);
+            previous = day;
         }
-        read.complete(today.minusDays(1));
-        read.complete(today.minusDays(2));
-        log.info("Seeded {} demo habits", habits.size());
-    }
 
-    public Habit create(String name, String description) {
-        long id = ids.incrementAndGet();
-        Habit habit = new Habit(id, name.trim(), description == null ? "" : description.trim(), today());
-        habits.put(id, habit);
-        log.info("Created habit id={} name='{}'", id, habit.getName());
-        return habit;
-    }
-
-    public List<HabitResponse> list() {
-        LocalDate today = today();
-        return habits.values().stream()
-                .sorted(Comparator.comparingLong(Habit::getId))
-                .map(h -> HabitResponse.from(h, today))
-                .toList();
-    }
-
-    public HabitResponse get(long id) {
-        return HabitResponse.from(find(id), today());
-    }
-
-    public HabitResponse checkIn(long id) {
-        Habit habit = find(id);
-        boolean added = habit.complete(today());
-        log.info("Check-in habit id={} newCompletion={} streak={}", id, added, habit.currentStreak(today()));
-        return HabitResponse.from(habit, today());
-    }
-
-    public HabitResponse undoCheckIn(long id) {
-        Habit habit = find(id);
-        habit.undo(today());
-        log.info("Undo check-in habit id={}", id);
-        return HabitResponse.from(habit, today());
-    }
-
-    public void delete(long id) {
-        if (habits.remove(id) == null) {
-            throw new HabitNotFoundException(id);
+        // current streak: consecutive days ending today or yesterday
+        int current = 0;
+        LocalDate cursor = sorted.last();
+        LocalDate today = LocalDate.now();
+        if (cursor.equals(today) || cursor.equals(today.minusDays(1))) {
+            current = 1;
+            LocalDate walker = cursor;
+            while (sorted.contains(walker.minusDays(1))) {
+                current++;
+                walker = walker.minusDays(1);
+            }
         }
-        log.info("Deleted habit id={}", id);
+
+        habit.setCurrentStreak(current);
+        habit.setLongestStreak(longest);
     }
 
-    public int reset() {
-        int removed = habits.size();
-        habits.clear();
-        log.warn("All habits reset by admin ({} removed)", removed);
-        return removed;
-    }
+    public HabitStats getStats(Long id) {
+        Habit habit = getById(id);
+        LocalDate today = LocalDate.now();
+        long completionsLast7 = habit.getCompletedDates().stream()
+                .filter(d -> !d.isBefore(today.minusDays(6)) && !d.isAfter(today))
+                .count();
+        double rate = (completionsLast7 / 7.0) * 100.0;
 
-    public StatsResponse stats() {
-        List<HabitResponse> all = list();
-        int done = (int) all.stream().filter(HabitResponse::completedToday).count();
-        int rate = all.isEmpty() ? 0 : Math.round(done * 100f / all.size());
-        int best = all.stream().mapToInt(HabitResponse::currentStreak).max().orElse(0);
-        return new StatsResponse(all.size(), done, rate, best);
-    }
-
-    private Habit find(long id) {
-        Habit habit = habits.get(id);
-        if (habit == null) {
-            throw new HabitNotFoundException(id);
-        }
-        return habit;
-    }
-
-    private LocalDate today() {
-        return LocalDate.now(clock);
+        return new HabitStats(
+                habit.getId(),
+                habit.getName(),
+                habit.getCompletedDates().size(),
+                habit.getCurrentStreak(),
+                habit.getLongestStreak(),
+                Math.round(rate * 10.0) / 10.0
+        );
     }
 }

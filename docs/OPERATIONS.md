@@ -12,18 +12,18 @@ The Service is type **LoadBalancer** on port **8080**; Docker Desktop publishes 
 ```powershell
 kubectl -n habit-tracker get svc habit-tracker      # EXTERNAL-IP localhost, PORT 8080
 ```
-Open **http://127.0.0.1:8080** (web UI). Jenkins runs on http://127.0.0.1:8090.
-Fallback if the LoadBalancer is not published: `kubectl -n habit-tracker port-forward svc/habit-tracker 8081:8080`
-and use http://127.0.0.1:8081.
+Open **http://127.0.0.1:8080** (dashboard). Jenkins runs on http://127.0.0.1:8090.
+Fallback if the LoadBalancer is not published: `kubectl -n habit-tracker port-forward svc/habit-tracker 8080:8080`.
 
-| URL | Shows |
-|---|---|
-| `/` | Habit Tracker web UI (habits, streaks, version, pod name) |
-| `/api/habits` | All habits as JSON |
-| `/api/stats` | Totals and today's completion rate |
-| `/api/info` | App version (= image tag), environment, greeting (ConfigMap) and pod name |
-| `/actuator/health/liveness`, `/actuator/health/readiness` | Probe endpoints |
-| `/actuator/prometheus` | Prometheus metrics |
+| Method | URL | Shows |
+|---|---|---|
+| GET | `/` | Habit Tracker dashboard (add habits, mark today done, stats, delete) |
+| GET | `/api/habits` | All habits as JSON (also used by the readiness/startup probes) |
+| POST | `/api/habits` | Create a habit `{"name","description","frequency":"DAILY|WEEKLY"}` |
+| POST | `/api/habits/{id}/complete` | Mark done today (or `?date=YYYY-MM-DD`) |
+| GET | `/api/habits/{id}/stats` | Total completions, current/longest streak, last-7-days rate |
+
+`demo\app-output.ps1` calls these endpoints and saves the responses to `evidence\app-output\`.
 
 ---
 
@@ -46,16 +46,16 @@ kubectl -n habit-tracker logs -l app.kubernetes.io/name=habit-tracker --prefix -
 kubectl -n habit-tracker logs -f deploy/habit-tracker                        # follow live
 kubectl -n habit-tracker logs <pod> --previous                               # logs of a crashed container
 ```
-The app logs every action with timestamp, level, thread and logger, for example
-`Created habit id=4 name='Meditate'` and `Check-in habit id=4 newCompletion=true streak=1`.
-Log level is set from the ConfigMap (`LOG_LEVEL`).
+Spring Boot logs startup, Tomcat port 8080 and request handling. Log levels come from the ConfigMap
+(`LOGGING_LEVEL_ROOT`, `LOGGING_LEVEL_COM_EXAMPLE_HABITTRACKER`), e.g. set `DEBUG` in values.yaml and push.
 
 ---
 
 ## 4. Monitoring
 
-**Metrics endpoint:** `/actuator/prometheus` (JVM memory, GC, HTTP request counts and latency).
-Pods carry `prometheus.io/scrape` annotations so a Prometheus server can scrape them.
+**Health signals:** Kubernetes startup/readiness probes call `/api/habits` and the liveness probe calls `/`;
+the Docker image has a HEALTHCHECK on `/api/habits`. (The given app has no Spring Actuator, so no
+`/actuator/*` endpoints.)
 
 **Resource usage and autoscaling (metrics-server):**
 ```powershell
@@ -134,5 +134,5 @@ kubectl -n habit-tracker get rs               # old ReplicaSet scaled to 0, new 
 | Image | Multi-stage build, minimal JRE Alpine runtime, `.dockerignore`, non-root UID 1001 |
 | Pod | `runAsNonRoot`, read-only root filesystem, all Linux capabilities dropped, no privilege escalation, seccomp `RuntimeDefault`, no service-account token mounted |
 | Network | NetworkPolicy allows inbound traffic only on port 8080 (enforced when the cluster's network plugin supports NetworkPolicy) |
-| Secrets | CI credentials stored in Jenkins Credentials; app admin token in a Kubernetes Secret (`X-Admin-Token` for `/api/admin/reset`). In production use Sealed Secrets / External Secrets instead of a value in Git |
+| Secrets | CI credentials stored in Jenkins Credentials; app secrets injected from a Kubernetes Secret (envFrom). In production use Sealed Secrets / External Secrets instead of a value in Git |
 | Deployment | Jenkins never runs `kubectl`; only Argo CD (pull-based GitOps) changes the cluster |

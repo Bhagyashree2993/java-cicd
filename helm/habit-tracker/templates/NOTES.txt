@@ -9,4 +9,4 @@ Open the app:
   then browse http://127.0.0.1:8080
 {{- end }}
 
-API: /api/info  /api/habits  /api/stats   Health: /actuator/health/readiness
+API: /api/habits   /api/habits/{id}/stats   (dashboard on /)

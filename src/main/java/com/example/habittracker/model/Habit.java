@@ -1,65 +1,111 @@
 package com.example.habittracker.model;
 
 import java.time.LocalDate;
-import java.util.Collections;
-import java.util.NavigableSet;
-import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
-/** A habit the user wants to build, plus the days it was completed. */
+/**
+ * Habit domain object. Kept as a plain in-memory model - no JPA / DB annotations,
+ * since this application intentionally has no external database dependency.
+ */
 public class Habit {
 
-    private final long id;
-    private final String name;
-    private final String description;
-    private final LocalDate createdOn;
-    private final NavigableSet<LocalDate> completions = new ConcurrentSkipListSet<>();
+    public enum Frequency {
+        DAILY, WEEKLY
+    }
 
-    public Habit(long id, String name, String description, LocalDate createdOn) {
+    private Long id;
+    private String name;
+    private String description;
+    private Frequency frequency = Frequency.DAILY;
+    private boolean active = true;
+    private LocalDate createdDate = LocalDate.now();
+
+    // dates (yyyy-MM-dd) on which the habit was marked as completed
+    private Set<LocalDate> completedDates = new LinkedHashSet<>();
+
+    private int currentStreak = 0;
+    private int longestStreak = 0;
+
+    public Habit() {
+    }
+
+    public Habit(Long id, String name, String description, Frequency frequency) {
         this.id = id;
         this.name = name;
         this.description = description;
-        this.createdOn = createdOn;
+        this.frequency = frequency == null ? Frequency.DAILY : frequency;
     }
 
-    public long getId() { return id; }
-    public String getName() { return name; }
-    public String getDescription() { return description; }
-    public LocalDate getCreatedOn() { return createdOn; }
-
-    public NavigableSet<LocalDate> getCompletions() {
-        return Collections.unmodifiableNavigableSet(completions);
+    public Long getId() {
+        return id;
     }
 
-    public boolean complete(LocalDate day) { return completions.add(day); }
-
-    public boolean undo(LocalDate day) { return completions.remove(day); }
-
-    public boolean isCompletedOn(LocalDate day) { return completions.contains(day); }
-
-    /**
-     * Consecutive completed days ending today. If today is not done yet, the streak
-     * still counts up to yesterday, so it does not reset until a day is actually missed.
-     */
-    public int currentStreak(LocalDate today) {
-        LocalDate day = completions.contains(today) ? today : today.minusDays(1);
-        int streak = 0;
-        while (completions.contains(day)) {
-            streak++;
-            day = day.minusDays(1);
-        }
-        return streak;
+    public void setId(Long id) {
+        this.id = id;
     }
 
-    /** Longest run of consecutive completed days ever. */
-    public int longestStreak() {
-        int best = 0;
-        int run = 0;
-        LocalDate previous = null;
-        for (LocalDate day : completions) {
-            run = (previous != null && previous.plusDays(1).equals(day)) ? run + 1 : 1;
-            best = Math.max(best, run);
-            previous = day;
-        }
-        return best;
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    public Frequency getFrequency() {
+        return frequency;
+    }
+
+    public void setFrequency(Frequency frequency) {
+        this.frequency = frequency;
+    }
+
+    public boolean isActive() {
+        return active;
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
+    }
+
+    public LocalDate getCreatedDate() {
+        return createdDate;
+    }
+
+    public void setCreatedDate(LocalDate createdDate) {
+        this.createdDate = createdDate;
+    }
+
+    public Set<LocalDate> getCompletedDates() {
+        return completedDates;
+    }
+
+    public void setCompletedDates(Set<LocalDate> completedDates) {
+        this.completedDates = completedDates;
+    }
+
+    public int getCurrentStreak() {
+        return currentStreak;
+    }
+
+    public void setCurrentStreak(int currentStreak) {
+        this.currentStreak = currentStreak;
+    }
+
+    public int getLongestStreak() {
+        return longestStreak;
+    }
+
+    public void setLongestStreak(int longestStreak) {
+        this.longestStreak = longestStreak;
     }
 }

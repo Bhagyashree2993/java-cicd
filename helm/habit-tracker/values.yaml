@@ -14,17 +14,20 @@ nameOverride: ""
 fullnameOverride: ""
 
 # ---- Application configuration -> ConfigMap (non-secret settings) ----
+# Spring Boot maps environment variables onto its properties, so these configure
+# the given app without changing its code (e.g. LOGGING_LEVEL_ROOT = logging.level.root).
 config:
   APP_ENV: "production"
-  APP_GREETING: "Build better habits, one day at a time."
-  APP_SEED_DEMO_DATA: "true"
-  LOG_LEVEL: DEBUG
+  LOGGING_LEVEL_ROOT: INFO
+  LOGGING_LEVEL_COM_EXAMPLE_HABITTRACKER: INFO
   JAVA_OPTS: "-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError"
 
 # ---- Sensitive configuration -> Secret ----
 # For a real production cluster do NOT keep secret values in Git: set
 # secret.existingSecret to a Secret created by Sealed Secrets / External Secrets,
 # or pass the value at install time (--set secret.adminToken=...).
+# The given app needs no credentials today; the Secret shows how sensitive values
+# are injected (envFrom secretRef) when it does, e.g. a database password.
 secret:
   existingSecret: ""
   adminToken: "change-me-demo-token"
@@ -65,19 +68,22 @@ resources:
     cpu: 500m
     memory: 512Mi
 
+# The given app has no Spring Actuator, so probes use its own endpoints:
+#   /api/habits -> REST API answers (app started and ready for traffic)
+#   /           -> dashboard is served (web server alive)
 probes:
   startup:
-    path: /actuator/health/liveness
+    path: /api/habits
     initialDelaySeconds: 10
     periodSeconds: 5
-    failureThreshold: 30
+    failureThreshold: 60        # allow up to ~5 min for a slow start on a busy laptop
   liveness:
-    path: /actuator/health/liveness
+    path: /
     periodSeconds: 10
     timeoutSeconds: 3
     failureThreshold: 3
   readiness:
-    path: /actuator/health/readiness
+    path: /api/habits
     periodSeconds: 5
     timeoutSeconds: 3
     failureThreshold: 3
@@ -87,10 +93,7 @@ serviceAccount:
   name: ""
   annotations: {}
 
-podAnnotations:
-  prometheus.io/scrape: "true"
-  prometheus.io/path: /actuator/prometheus
-  prometheus.io/port: "8080"
+podAnnotations: {}
 
 podSecurityContext:
   runAsNonRoot: true

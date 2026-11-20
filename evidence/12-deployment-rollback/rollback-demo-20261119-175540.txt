@@ -1,0 +1,98 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20261119175540
+Username: DESKTOP-OGJOH0I\hp
+RunAs User: DESKTOP-OGJOH0I\hp
+Configuration Name: 
+Machine: DESKTOP-OGJOH0I (Microsoft Windows NT 10.0.26200.0)
+Host Application: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -File demo\rollback-demo.ps1 -Url http://127.0.0.1:8001/api/v1/namespaces/habit-tracker/services/habit-tracker:http/proxy/actuator/health/readiness
+Process ID: 35616
+PSVersion: 5.1.26100.9711
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9711
+BuildVersion: 10.0.26100.9711
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+
+==================== Pre-checks ====================
+From https://github.com/Bhagyashree2993/java-cicd
+ * branch            main       -> FETCH_HEAD
+Already up to date.
+
+> kubectl -n habit-tracker get pods
+NAME                             READY   STATUS    RESTARTS      AGE
+habit-tracker-54dfb8d475-6z2l5   1/1     Running   6 (98m ago)   2d2h
+habit-tracker-54dfb8d475-cxzfp   1/1     Running   7 (98m ago)   2d2h
+
+> kubectl -n argocd get application habit-tracker
+NAME            SYNC STATUS   HEALTH STATUS
+habit-tracker   Synced        Healthy
+Checking application URL: http://127.0.0.1:8001/api/v1/namespaces/habit-tracker/services/habit-tracker:http/proxy/actuator/health/readiness
+Current good image tag: 1.0.0-5-bfb766f
+
+==================== Start health-check loop (1 request/second) ====================
+
+==================== A) Deploy a NEW version (LOG_LEVEL INFO -> DEBUG triggers a rolling update) ====================
+
+[main 5892366] demo: new version - set LOG_LEVEL=DEBUG [skip ci]
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+
+
+> kubectl -n argocd annotate application habit-tracker argocd.argoproj.io/refresh=hard --overwrite
+application.argoproj.io/habit-tracker annotated
+
+> kubectl -n habit-tracker rollout status deploy/habit-tracker --timeout=240s
+Waiting for deployment "habit-tracker" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "habit-tracker" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "habit-tracker" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "habit-tracker" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "habit-tracker" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "habit-tracker" rollout to finish: 1 old replicas are pending termination...
+deployment "habit-tracker" successfully rolled out
+
+> kubectl -n habit-tracker get pods
+NAME                             READY   STATUS        RESTARTS      AGE
+habit-tracker-54dfb8d475-6z2l5   1/1     Terminating   6 (99m ago)   2d2h
+habit-tracker-656964f67f-lqdlg   1/1     Running       0             43s
+habit-tracker-656964f67f-pkxrc   1/1     Running       0             84s
+
+> kubectl -n habit-tracker exec deploy/habit-tracker -- printenv LOG_LEVEL
+DEBUG
+
+> kubectl -n argocd get application habit-tracker
+NAME            SYNC STATUS   HEALTH STATUS
+habit-tracker   Synced        Healthy
+
+==================== B) Deploy a BAD version (image tag that does not exist) ====================
+
+
+
+
+
+> kubectl -n argocd annotate application habit-tracker argocd.argoproj.io/refresh=hard --overwrite
+application.argoproj.io/habit-tracker annotated
+Waiting up to 150s for Argo CD to apply the bad tag and the new pod to fail...
+
+> kubectl -n habit-tracker get pods
+NAME                             READY   STATUS         RESTARTS   AGE
+habit-tracker-577f4c8f58-pm48t   0/1     ErrImagePull   0          8s
+habit-tracker-656964f67f-lqdlg   1/1     Running        0          66s
+habit-tracker-656964f67f-pkxrc   1/1     Running        0          107s
+
+> kubectl -n habit-tracker rollout status deploy/habit-tracker --timeout=10s
+Waiting for deployment "habit-tracker" rollout to finish: 1 out of 2 new replicas have been updated...
+>> TerminatingError(kubectl.exe): "The running command stopped because the preference variable "ErrorActionPreference" or common parameter is set to Stop: error: timed out waiting for the condition"
+>> TerminatingError(kubectl.exe): "The running command stopped because the preference variable "ErrorActionPreference" or common parameter is set to Stop: error: timed out waiting for the condition"
+>> TerminatingError(kubectl.exe): "The running command stopped because the preference variable "ErrorActionPreference" or common parameter is set to Stop: error: timed out waiting for the condition"
+
+==================== Availability summary ====================
+Health checks: 127 total, 0 not HTTP 200
+Probe log: C:\Users\hp\Downloads\java-cicd\java-cicd\evidence\12-deployment-rollback\health-probe-20261119-175540.csv
+**********************
+Windows PowerShell transcript end
+End time: 20261119175802
+**********************

@@ -1,5 +1,5 @@
 // =============================================================================
-// Habit Tracker CI pipeline (Jenkins does CI only - it never runs kubectl)
+// Habit Tracker (given HabitApp code) CI pipeline - Jenkins does CI only, never kubectl
 //
 //  GitHub -> Checkout -> Maven build & unit tests -> SonarQube + Quality Gate
 //         -> Docker multi-stage build -> Trivy scan -> container smoke test
@@ -7,7 +7,7 @@
 //         -> Argo CD (GitOps) syncs the new version to Kubernetes
 //
 // Jenkins prerequisites:
-//   Tools       : JDK 'jdk17', Maven 'maven3'
+//   Tools       : JDK 'jdk21' (the app needs Java 21), Maven 'maven3'
 //   SonarQube   : server 'sonarqube' + webhook  http://jenkins:8080/sonarqube-webhook/
 //   Credentials : 'dockerhub-creds' (user + access token), 'github-creds' (user + PAT),
 //                 'sonar-token' (secret text, used by the SonarQube server config)
@@ -17,7 +17,7 @@ pipeline {
     agent any
 
     tools {
-        jdk   'jdk17'
+        jdk   'jdk21'
         maven 'maven3'
     }
 
@@ -81,7 +81,13 @@ pipeline {
             when { not { environment name: 'SKIP_PIPELINE', value: 'true' } }
             steps {
                 withSonarQubeEnv('sonarqube') {
-                    sh 'mvn -B sonar:sonar -Dsonar.projectVersion=${IMAGE_TAG}'
+                    // The given pom.xml points sonar.host.url at localhost:9000; inside Jenkins the
+                    // server is the one configured in withSonarQubeEnv, so override it here.
+                    sh '''mvn -B sonar:sonar \
+                          -Dsonar.host.url=${SONAR_HOST_URL} \
+                          -Dsonar.projectKey=habit-tracker-app \
+                          -Dsonar.projectName="Habit Tracker (HabitApp)" \
+                          -Dsonar.projectVersion=${IMAGE_TAG}'''
                 }
             }
         }
@@ -129,24 +135,47 @@ pipeline {
         stage('Container Smoke Test') {
             when { not { environment name: 'SKIP_PIPELINE', value: 'true' } }
             steps {
-                // Start the image and check it answers on port 8080 before it is published
+                // Start the image and exercise the given app's REST API on port 8080 before
+                // publishing it. The output is saved as app-output.txt (build artifact).
                 sh '''
                     docker rm -f habit-smoke >/dev/null 2>&1 || true
                     docker run -d --name habit-smoke ${REGISTRY}/${IMAGE_REPO}:${IMAGE_TAG}
                     for i in $(seq 1 30); do
-                      if docker exec habit-smoke wget -qO- http://127.0.0.1:8080/actuator/health/readiness 2>/dev/null; then
-                        echo; echo "Readiness OK after ${i} tries"; break
+                      if docker exec habit-smoke wget -qO- http://127.0.0.1:8080/api/habits >/dev/null 2>&1; then
+                        echo "App is answering on port 8080 after ${i} tries"; break
                       fi
                       sleep 3
                       if [ "$i" = "30" ]; then docker logs habit-smoke; exit 1; fi
                     done
-                    echo "--- GET /api/info ---";   docker exec habit-smoke wget -qO- http://127.0.0.1:8080/api/info;   echo
-                    echo "--- GET /api/habits ---"; docker exec habit-smoke wget -qO- http://127.0.0.1:8080/api/habits; echo
-                    echo "--- container runs as ---"; docker exec habit-smoke id
+                    H='http://127.0.0.1:8080/api/habits'
+                    {
+                      echo "=== Habit Tracker application output (image ${IMAGE_TAG}) ==="
+                      echo; echo "--- GET / (dashboard) ---"
+                      docker exec habit-smoke wget -qO- http://127.0.0.1:8080/ | grep -o '<title>.*</title>'
+                      echo; echo "--- POST /api/habits (create) ---"
+                      docker exec habit-smoke wget -qO- --header 'Content-Type: application/json' \
+                        --post-data '{"name":"Drink water","description":"8 glasses a day","frequency":"DAILY"}' $H
+                      echo; echo "--- POST /api/habits (create) ---"
+                      docker exec habit-smoke wget -qO- --header 'Content-Type: application/json' \
+                        --post-data '{"name":"Read 10 pages","description":"before bed","frequency":"DAILY"}' $H
+                      echo; echo "--- POST /api/habits/1/complete (yesterday and today) ---"
+                      docker exec habit-smoke wget -qO- --post-data '' "$H/1/complete?date=$(date -d yesterday +%F 2>/dev/null || date -v-1d +%F)"
+                      echo
+                      docker exec habit-smoke wget -qO- --post-data '' $H/1/complete
+                      echo; echo "--- GET /api/habits/1/stats ---"
+                      docker exec habit-smoke wget -qO- $H/1/stats
+                      echo; echo "--- GET /api/habits ---"
+                      docker exec habit-smoke wget -qO- $H
+                      echo; echo "--- container user ---"
+                      docker exec habit-smoke id
+                    } | tee app-output.txt
                 '''
             }
             post {
-                always { sh 'docker rm -f habit-smoke >/dev/null 2>&1 || true' }
+                always {
+                    archiveArtifacts artifacts: 'app-output.txt', allowEmptyArchive: true
+                    sh 'docker rm -f habit-smoke >/dev/null 2>&1 || true'
+                }
             }
         }
 

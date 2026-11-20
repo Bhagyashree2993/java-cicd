@@ -17,9 +17,7 @@ $cmds = @(
   'kubectl -n habit-tracker rollout status deploy/habit-tracker',
   'kubectl -n habit-tracker rollout history deploy/habit-tracker',
   'kubectl -n argocd get application habit-tracker',
-  'curl.exe -s http://127.0.0.1:8080/actuator/health/readiness',
-  'curl.exe -s http://127.0.0.1:8080/api/info',
-  'curl.exe -s http://127.0.0.1:8080/api/stats',
+  'curl.exe -s -o NUL -w "GET / -> HTTP %{http_code}" http://127.0.0.1:8080/',
   'curl.exe -s http://127.0.0.1:8080/api/habits'
 )
 foreach ($c in $cmds) {

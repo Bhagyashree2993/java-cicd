@@ -13,4 +13,4 @@ spec:
   containers:
     - name: wget
       image: busybox:1.36
-      command: ["wget", "-qO-", "http://{{ include "habit-tracker.fullname" . }}:{{ .Values.service.port }}/actuator/health/readiness"]
+      command: ["wget", "-qO-", "http://{{ include "habit-tracker.fullname" . }}:{{ .Values.service.port }}/api/habits"]

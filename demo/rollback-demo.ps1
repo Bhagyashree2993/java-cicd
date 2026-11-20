@@ -5,7 +5,7 @@
 # A health-check loop runs the whole time to prove there is no downtime.
 # Every commit carries [skip ci] so Jenkins does not rebuild. Output is saved to evidence\12-deployment-rollback\.
 # Run from the repo root:  powershell -ExecutionPolicy Bypass -File demo\rollback-demo.ps1
-param([string]$Url = 'http://127.0.0.1:8080/actuator/health/readiness')
+param([string]$Url = 'http://127.0.0.1:8080/api/habits')
 
 $ErrorActionPreference = 'Stop'
 $values = 'helm/habit-tracker/values.yaml'
@@ -16,7 +16,12 @@ Start-Transcript -Path (Join-Path (Get-Location) "evidence\12-deployment-rollbac
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
 function Step($m) { Write-Host "`n==================== $m ====================" -ForegroundColor Cyan }
-function Run($cmd) { Write-Host "`n> $cmd" -ForegroundColor DarkGray; Invoke-Expression $cmd 2>&1 | Out-Host }
+function Run($cmd) {
+  Write-Host "`n> $cmd" -ForegroundColor DarkGray
+  # kubectl writes some expected messages (e.g. a rollout timeout during the bad-version step) to stderr;
+  # show them instead of letting Windows PowerShell stop the whole demo.
+  try { Invoke-Expression $cmd 2>&1 | Out-Host } catch { Write-Host "(expected) $($_.Exception.Message)" -ForegroundColor Yellow }
+}
 function Edit-Values($pattern, $replacement) {
   $s = [System.IO.File]::ReadAllText($values)
   $re = New-Object System.Text.RegularExpressions.Regex($pattern)
@@ -62,15 +67,15 @@ try {
   }
   Start-Sleep -Seconds 5
 
-  Step 'A) Deploy a NEW version (LOG_LEVEL INFO -> DEBUG triggers a rolling update)'
-  $curLevel = ([regex]::Match([System.IO.File]::ReadAllText($values), 'LOG_LEVEL:\s*(\w+)')).Groups[1].Value
+  Step 'A) Deploy a NEW version (LOGGING_LEVEL_ROOT INFO -> DEBUG triggers a rolling update)'
+  $curLevel = ([regex]::Match([System.IO.File]::ReadAllText($values), 'LOGGING_LEVEL_ROOT:\s*(\w+)')).Groups[1].Value
   $newLevel = if ($curLevel -eq 'INFO') { 'DEBUG' } else { 'INFO' }
-  Edit-Values 'LOG_LEVEL:\s*\w+' "LOG_LEVEL: $newLevel"
-  Push-Change "demo: new version - set LOG_LEVEL=$newLevel"
+  Edit-Values 'LOGGING_LEVEL_ROOT:\s*\w+' "LOGGING_LEVEL_ROOT: $newLevel"
+  Push-Change "demo: new version - set LOGGING_LEVEL_ROOT=$newLevel"
   Start-Sleep -Seconds 20
   Run 'kubectl -n habit-tracker rollout status deploy/habit-tracker --timeout=240s'
   Run 'kubectl -n habit-tracker get pods'
-  Run 'kubectl -n habit-tracker exec deploy/habit-tracker -- printenv LOG_LEVEL'
+  Run 'kubectl -n habit-tracker exec deploy/habit-tracker -- printenv LOGGING_LEVEL_ROOT'
   Run 'kubectl -n argocd get application habit-tracker'
 
   Step 'B) Deploy a BAD version (image tag that does not exist)'

@@ -1,9 +1,9 @@
 apiVersion: v2
 name: habit-tracker
-description: Reusable Helm chart for the Habit Tracker Spring Boot application
+description: Reusable Helm chart for the Habit Tracker (HabitApp) Spring Boot REST API + dashboard
 type: application
 version: 1.0.0          # chart version - bump when templates change
-appVersion: "1.0.0"     # application version; the deployed image tag lives in values.yaml
+appVersion: "0.0.1-SNAPSHOT"   # pom.xml version; the deployed image tag lives in values.yaml
 keywords: [java, spring-boot, habit-tracker]
 maintainers:
   - name: Bhagyashree2993
